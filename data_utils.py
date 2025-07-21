@@ -1,7 +1,6 @@
 import pdfplumber
 import docx
 import io
-import openpyxl
 def extract_text_from_pdf(uploaded_file):
     """Extract text content from a PDF file using pdfplumber."""
     text = ""
