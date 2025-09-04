@@ -4,8 +4,8 @@ pdfplumber
 requests
 plotly
 numpy
-tempfile
 pydf
 pdfreader
 docx
 json
+
