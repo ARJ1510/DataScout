@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 import os
 import io
-import plotly.express as px
+import tempfile
+
 from data_utils import extract_text_from_pdf, extract_text_from_doc
 from Cleaning import clean_dataframe_with_ai
 from eda_utils import (
@@ -13,26 +14,31 @@ from eda_utils import (
 )
 from llm_utils import ask_llama
 
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+
+# App Config
 st.set_page_config(page_title="DataScout", layout="wide")
 st.title("DataScout 🎯")
-st.caption("Your buddy for analytics.")
+st.caption("Your AI-powered data buddy for cleaning & analysis.")
 
-if "TOGETHER_API_KEY" in st.secrets:
-    os.environ["TOGETHER_API_KEY"] = st.secrets["TOGETHER_API_KEY"]
-else:
+# API Key Check
+
+if "TOGETHER_API_KEY" not in st.secrets:
     st.error("TOGETHER_API_KEY not found in secrets. Please add it to your app's settings.")
     st.stop()
+
+# File Upload
 
 uploaded_file = st.file_uploader("📁 Upload a file", type=["csv", "xlsx", "xls", "pdf", "docx", "txt"])
 
 if uploaded_file:
-    # File reading logic
     file_extension = uploaded_file.name.split(".")[-1].lower()
     try:
         if file_extension == "csv":
             file_size_mb = uploaded_file.size / (1024 * 1024)
             if file_size_mb > 100:
-                st.warning(f"⚠️ File is large ({file_size_mb:.2f} MB). Analyzing a sample of the first 1,000,000 rows.")
+                st.warning(f"⚠️ Large file ({file_size_mb:.2f} MB). Sampling first 1,000,000 rows.")
                 df = pd.read_csv(uploaded_file, low_memory=False, nrows=1000000)
             else:
                 df = pd.read_csv(uploaded_file, low_memory=False)
@@ -51,79 +57,137 @@ if uploaded_file:
         st.error(f"⚠️ Error reading the file: {e}")
         st.stop()
 
-    # AI cleaning and download
+    # AI Cleaning
     df_cleaned, original_shape = clean_dataframe_with_ai(df)
-    st.subheader("🧼 Cleaned Data Preview")
-    st.dataframe(df_cleaned)
-    csv = df_cleaned.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📥 Download Cleaned Data as CSV", data=csv,
-        file_name='cleaned_data.csv', mime='text/csv'
-    )
-    st.success(f"✅ Cleaned: From {original_shape[0]} rows to {df_cleaned.shape[0]} rows.")
 
-    # Basic stats
-    st.subheader("📈 Dataset Summary")
-    st.write("✅ Rows:", df_cleaned.shape[0], "| Columns:", df_cleaned.shape[1])
-    stats_df = generate_basic_stats(df_cleaned)
-    st.write(stats_df)
+    # Dashboard Tabs
 
-    # Visual Analysis
-    st.subheader("📊 Visual Analysis")
-    cat_cols = df_cleaned.select_dtypes(include='object').columns.tolist()
-    num_cols = df_cleaned.select_dtypes(include='number').columns.tolist()
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("#### Categorical Column Analysis")
-        if cat_cols:
-            selected_cat_col = st.selectbox("Select a Categorical Column", cat_cols)
-            if selected_cat_col:
-                fig = create_categorical_plot(df_cleaned, selected_cat_col)
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True)
-                    buf = io.BytesIO()
-                    fig.write_image(buf, format="png", scale=2)
-                    st.download_button(
-                        label=f"📥 Download '{selected_cat_col}' Chart", data=buf.getvalue(),
-                        file_name=f"{selected_cat_col}_chart.png", mime="image/png", key=f'cat_{selected_cat_col}'
-                    )
-    with col2:
-        st.markdown("#### Numerical Column Analysis")
-        if num_cols:
-            selected_num_col = st.selectbox("Select a Numerical Column", num_cols)
-            if selected_num_col:
-                fig = create_numerical_plot(df_cleaned, selected_num_col)
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True)
-                    buf = io.BytesIO()
-                    fig.write_image(buf, format="png", scale=2)
-                    st.download_button(
-                        label=f"📥 Download '{selected_num_col}' Chart", data=buf.getvalue(),
-                        file_name=f"{selected_num_col}_chart.png", mime="image/png", key=f'num_{selected_num_col}'
-                    )
+    tab1, tab2, tab3, tab4 = st.tabs(["🧼 Cleaning & Data", "📈 EDA Summary", "📊 Visuals", "🤖 AI Insights"])
 
-    # Heatmap
-    st.subheader("📉 Correlation Heatmap")
-    heatmap_fig = generate_correlation_heatmap_fig(df_cleaned)
-    if heatmap_fig:
-        st.plotly_chart(heatmap_fig, use_container_width=True)
-        buf = io.BytesIO()
-        heatmap_fig.write_image(buf, format="png", scale=2)
-        st.download_button(
-            label="📥 Download Heatmap", data=buf.getvalue(),
-            file_name="correlation_heatmap.png", mime="image/png"
-        )
-    else:
-        st.info("Not enough numeric columns to show a correlation heatmap.")
+    # Tab 1: Cleaned Data
+    with tab1:
+        st.subheader("🧼 Cleaned Data Preview")
+        st.dataframe(df_cleaned)
+        csv = df_cleaned.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download Cleaned Data", csv, "cleaned_data.csv", "text/csv")
+        st.success(f"✅ Cleaned: From {original_shape[0]} → {df_cleaned.shape[0]} rows")
 
-    # LLaMA Q&A
-    st.subheader("🧠 Ask AI about your data")
-    user_question = st.text_input("🔍 Ask a question")
-    if st.button("Submit Question"):
-        if user_question.strip():
-            with st.spinner("🤖 LLaMA is thinking..."):
-                data_sample = df_cleaned.head(10).to_csv(index=False)
-                prompt = f"Based on the data, answer: {user_question}\n\nData:\n{data_sample}"
+    # Tab 2: EDA Summary
+    with tab2:
+        st.subheader("📈 Dataset Summary")
+        st.write("✅ Rows:", df_cleaned.shape[0], "| Columns:", df_cleaned.shape[1])
+        stats_df = generate_basic_stats(df_cleaned)
+        st.write(stats_df)
+
+    # Tab 3: Visuals
+    with tab3:
+        st.subheader("📊 Visual Analysis")
+        cat_cols = df_cleaned.select_dtypes(include='object').columns.tolist()
+        num_cols = df_cleaned.select_dtypes(include='number').columns.tolist()
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if cat_cols:
+                selected_cat_col = st.selectbox("Select a Categorical Column", cat_cols)
+                if selected_cat_col:
+                    fig = create_categorical_plot(df_cleaned, selected_cat_col, show_percentage=True)
+                    if fig: st.plotly_chart(fig, use_container_width=True)
+
+        with col2:
+            if num_cols:
+                selected_num_col = st.selectbox("Select a Numerical Column", num_cols)
+                if selected_num_col:
+                    fig = create_numerical_plot(df_cleaned, selected_num_col, add_kde=True)
+                    if fig: st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("### 📉 Correlation Heatmap")
+        heatmap_fig = generate_correlation_heatmap_fig(df_cleaned)
+        if heatmap_fig:
+            st.plotly_chart(heatmap_fig, use_container_width=True)
+        else:
+            st.info("Not enough numeric columns for a heatmap.")
+
+    # Tab 4: AI Insights
+    with tab4:
+        st.subheader("🤖 AI Insights Report")
+
+        ai_insights_text = ""
+
+        if st.button("Generate AI Insights"):
+            with st.spinner("Analyzing dataset with AI..."):
+                stats_summary = generate_basic_stats(df_cleaned).to_string()
+                sample_data = df_cleaned.head(5).to_csv(index=False)
+                prompt = f"""
+                You are a professional data analyst.
+                Based on the dataset summary and sample, provide a short insights report.
+
+                ### Dataset Summary:
+                {stats_summary}
+
+                ### Sample Data:
+                {sample_data}
+
+                Please return insights as bullet points (3-6 points), highlighting:
+                - Data quality issues (missing values, outliers, etc.)
+                - Interesting patterns (skewed distributions, dominant categories)
+                - Any potential next steps
+                """
                 api_key = st.secrets["TOGETHER_API_KEY"]
                 response = ask_llama(prompt, api_key)
-                st.markdown("### 🤖 LLaMA's Response"); st.write(response)
+                ai_insights_text = response
+                st.markdown("### 📌 AI Insights")
+                st.write(response)
+
+        # PDF Download
+        if ai_insights_text:
+            if st.button("📥 Download Insights as PDF"):
+                styles = getSampleStyleSheet()
+                doc_elements = []
+
+                doc_elements.append(Paragraph("DataScout AI Insights Report", styles["Title"]))
+                doc_elements.append(Spacer(1, 20))
+
+                doc_elements.append(Paragraph("Dataset Overview", styles["Heading2"]))
+                doc_elements.append(Paragraph(f"Rows: {df_cleaned.shape[0]}, Columns: {df_cleaned.shape[1]}", styles["Normal"]))
+                doc_elements.append(Spacer(1, 12))
+
+                doc_elements.append(Paragraph("AI Insights", styles["Heading2"]))
+                doc_elements.append(Paragraph(ai_insights_text.replace("\n", "<br/>"), styles["Normal"]))
+
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                    pdf_path = tmp_file.name
+                    doc = SimpleDocTemplate(pdf_path)
+                    doc.build(doc_elements)
+
+                    with open(pdf_path, "rb") as f:
+                        st.download_button(
+                            label="📥 Download PDF Report",
+                            data=f,
+                            file_name="DataScout_AI_Insights.pdf",
+                            mime="application/pdf"
+                        )
+
+        # --- AI Q&A ---
+        st.subheader("💬 Ask AI a Question")
+        user_question = st.text_input("🔍 Ask about your dataset")
+        if st.button("Submit Question"):
+            if user_question.strip():
+                with st.spinner("🤖 LLaMA is thinking..."):
+                    stats_summary = generate_basic_stats(df_cleaned).to_string()
+                    data_sample = df_cleaned.head(5).to_csv(index=False)
+                    prompt = f"""
+                    You are a data analyst. Use the dataset summary and sample to answer.
+
+                    ### Dataset Summary:
+                    {stats_summary}
+
+                    ### Sample Data:
+                    {data_sample}
+
+                    ### User Question:
+                    {user_question}
+                    """
+                    api_key = st.secrets["TOGETHER_API_KEY"]
+                    response = ask_llama(prompt, api_key)
+                    st.markdown("### 🤖 LLaMA's Response")
+                    st.write(response)
