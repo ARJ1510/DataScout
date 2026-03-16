@@ -60,7 +60,10 @@ Launch the Streamlit application by running the following command in your termin
 ```sh
 streamlit run main.py
 ```
-
+### App Link(Streamlit): 
+```sh
+https://datascout-6p7w8jsbiqvohcj64ayab5.streamlit.app/
+```
 -----
 
 ## Usage
